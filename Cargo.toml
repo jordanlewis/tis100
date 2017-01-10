@@ -1,0 +1,6 @@
+[package]
+name = "tis100"
+version = "0.1.0"
+authors = ["Jordan Lewis <jordanthelewis@gmail.com>"]
+
+[dependencies]
