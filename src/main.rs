@@ -1,8 +1,3 @@
-#[macro_use]
-extern crate nom;
-
-//mod parser;
-
 use std::io;
 use std::io::BufRead;
 use std::io::StdinLock;
