@@ -93,7 +93,7 @@ pub fn parse_mov(words: &mut SplitWhitespace) -> Result<Instr, String> {
   Ok(Instr::Mov(src, dest))
 }
 
-pub fn parse_line(line: String) -> Result<Instr, String> {
+pub fn parse_line(line: &str) -> Result<Instr, String> {
   let mut words = line.split_whitespace();
   match words.next() {
     Some("NOP") => Ok(Instr::Nop),
@@ -157,8 +157,6 @@ pub fn parse_line(line: String) -> Result<Instr, String> {
           .parse::<u8>()
           .map_err(|e| e.to_string())
           .map(Instr::Section)
-      } else if s.ends_with(":") {
-        Ok(Instr::Label(s[..s.len() - 1].to_string()))
       } else {
         Err(format!("invalid instr {}", s))
       }
@@ -167,12 +165,20 @@ pub fn parse_line(line: String) -> Result<Instr, String> {
   }
 }
 
+fn get_label<'a>(line: &'a str) -> (&'a str, Option<Label>) {
+  match line.find(":") {
+    Some(i) => (&line[i..], Some(line[..i-1].to_string())),
+    None => (&line, None),
+  }
+}
+
 fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
   let mut next_section = 0;
   let mut programs = Vec::new();
   let mut instrs = Vec::new();
   for line in buf.lines() {
-    let line = line.unwrap();
+    let line = &line.unwrap();
+    let (line, label) = get_label(line);
     let instr = try!(parse_line(line));
     match instr {
       Instr::Section(i) => {
@@ -251,13 +257,13 @@ mod tests {
   #[test]
   fn test_parse_line() {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
-               parse_line("MOV 3, ACC".to_string()));
-    assert_eq!(Ok(Instr::Swp), parse_line("SWP".to_string()));
+               parse_line("MOV 3, ACC"));
+    assert_eq!(Ok(Instr::Swp), parse_line("SWP"));
     assert_eq!(Ok(Instr::Sub(Source::Val(3))),
-               parse_line("SUB 3".to_string()));
+               parse_line("SUB 3"));
     assert_eq!(Ok(Instr::Sub(Source::Loc(Loc::Left))),
-               parse_line("SUB LEFT".to_string()));
+               parse_line("SUB LEFT"));
     assert_eq!(Ok(Instr::Jmp("FOO".to_string())),
-               parse_line("JMP FOO".to_string()));
+               parse_line("JMP FOO"));
   }
 }
