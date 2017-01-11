@@ -1,6 +1,5 @@
 use std::io;
 use std::io::BufRead;
-use std::io::StdinLock;
 use std::str::SplitWhitespace;
 
 #[derive(Debug, PartialEq)]
@@ -38,14 +37,17 @@ pub enum Instr {
   Jro(Source),
   Label(String),
   Comment(String),
+  Emptyline,
   // This is a section switch marker and won't be included in a program.
   Section(u8),
 }
 
+#[derive(Debug)]
 struct Program {
   instrs: Vec<Instr>,
 }
 
+#[derive(Debug)]
 struct Spec {
   programs: Vec<Program>,
 }
@@ -91,7 +93,7 @@ pub fn parse_mov(words: &mut SplitWhitespace) -> Result<Instr, String> {
   Ok(Instr::Mov(src, dest))
 }
 
-fn parse_line(line: String) -> Result<Instr, String> {
+pub fn parse_line(line: String) -> Result<Instr, String> {
   let mut words = line.split_whitespace();
   match words.next() {
     Some("NOP") => Ok(Instr::Nop),
@@ -161,7 +163,7 @@ fn parse_line(line: String) -> Result<Instr, String> {
         Err(format!("invalid instr {}", s))
       }
     }
-    None => Ok(Instr::Comment("".to_string())),
+    None => Ok(Instr::Emptyline),
   }
 }
 
@@ -179,11 +181,27 @@ fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
         } else if i > 11 {
           return Err(format!("section {} greater than maximum 11", i));
         }
+        if next_section > 0 {
+          // sections must end with an empty line
+          try!(instrs.pop()
+            .ok_or("invalid empty section".to_string())
+            .and_then(|i| {
+              match i {
+                Instr::Emptyline => Ok(i),
+                i => Err(format!("invalid nonempty final instr {:?}", i)),
+              }
+            }));
+          programs.push(Program { instrs: instrs });
+          instrs = Vec::new();
+        }
         next_section = next_section + 1;
-        programs.push(Program { instrs: instrs });
-        instrs = Vec::new();
       }
-      i => instrs.push(i),
+      i => {
+        if next_section == 0 {
+          return Err(format!("missing @0 header, found {:?}", i));
+        }
+        instrs.push(i)
+      }
     }
   }
   Ok(Spec { programs: programs })
@@ -194,6 +212,7 @@ fn main() {
   let stdin = &mut stdin.lock();
 
   let spec = parse_spec(stdin).unwrap();
+  println!("{:?}", spec);
 }
 
 #[cfg(test)]
@@ -223,5 +242,22 @@ mod tests {
   fn test_parse_mov() {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
                parse_mov(&mut "3, ACC".split_whitespace()));
+    assert_eq!(Ok(Instr::Mov(Source::Loc(Loc::Acc), Loc::Acc)),
+               parse_mov(&mut "ACC, ACC".split_whitespace()));
+
+    assert!(parse_mov(&mut "f, ACC".split_whitespace()).is_err());
+  }
+
+  #[test]
+  fn test_parse_line() {
+    assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
+               parse_line("MOV 3, ACC".to_string()));
+    assert_eq!(Ok(Instr::Swp), parse_line("SWP".to_string()));
+    assert_eq!(Ok(Instr::Sub(Source::Val(3))),
+               parse_line("SUB 3".to_string()));
+    assert_eq!(Ok(Instr::Sub(Source::Loc(Loc::Left))),
+               parse_line("SUB LEFT".to_string()));
+    assert_eq!(Ok(Instr::Jmp("FOO".to_string())),
+               parse_line("JMP FOO".to_string()));
   }
 }
