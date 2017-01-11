@@ -38,6 +38,8 @@ pub enum Instr {
   Jro(Source),
   Label(String),
   Comment(String),
+  // This is a section switch marker and won't be included in a program.
+  Section(u8),
 }
 
 struct Program {
@@ -91,66 +93,85 @@ pub fn parse_mov(words: &mut SplitWhitespace) -> Result<Instr, String> {
   Ok(Instr::Mov(src, dest))
 }
 
-fn parse_spec(buf: &mut BufRead) -> Result<i32, String> {
-  let mut section = 0;
+fn parse_line(line: String) -> Result<Instr, String> {
+  let mut words = line.split_whitespace();
+  match words.next() {
+    Some("NOP") => { Ok(Instr::Nop) }
+    Some("MOV") => { parse_mov(&mut words) }
+    Some("SWP") => { Ok(Instr::Swp) }
+    Some("SAV") => { Ok(Instr::Sav) }
+    Some("ADD") => { words.next()
+                          .ok_or("invalid add instr without source".to_string())
+                          .and_then(parse_source)
+                          .map(Instr::Add) }
+    Some("SUB") => { words.next()
+                          .ok_or("invalid sub instr without source".to_string())
+                          .and_then(parse_source)
+                          .map(Instr::Sub) }
+    Some("NEG") => { Ok(Instr::Neg) }
+    Some("JMP") => { words.next()
+                          .ok_or("invalid jmp instr without label".to_string())
+                          .map(str::to_string)
+                          .map(Instr::Jmp) }
+    Some("JEZ") => { words.next()
+                          .ok_or("invalid jez instr without label".to_string())
+                          .map(str::to_string)
+                          .map(Instr::Jez) }
+    Some("JNZ") => { words.next()
+                          .ok_or("invalid jnz instr without label".to_string())
+                          .map(str::to_string)
+                          .map(Instr::Jnz) }
+    Some("JGZ") => { words.next()
+                          .ok_or("invalid jgz instr without label".to_string())
+                          .map(str::to_string)
+                          .map(Instr::Jgz) }
+    Some("JLZ") => { words.next()
+                          .ok_or("invalid jlz instr without label".to_string())
+                          .map(str::to_string)
+                          .map(Instr::Jlz) }
+    Some("JRO") => { words.next()
+                          .ok_or("invalid jro instr without source".to_string())
+                          .and_then(parse_source)
+                          .map(Instr::Jro) }
+    Some(s) => {
+      if s.starts_with("#") {
+        Ok(Instr::Comment(words.fold(s.to_string(), |acc, s| acc + " " + s)))
+      } else if s.starts_with("@") {
+        s[1..].parse::<u8>()
+            .map_err(|e| e.to_string())
+            .map(Instr::Section)
+      } else if s.ends_with(":") {
+        Ok(Instr::Label(s[..s.len() - 1].to_string()))
+      } else {
+        Err(format!("invalid instr {}", s))
+      }
+    }
+    None => { Ok(Instr::Comment("".to_string())) }
+  }
+}
+
+fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
+  let mut next_section = 0;
+  let mut programs = Vec::new();
+  let mut instrs = Vec::new();
   for line in buf.lines() {
     let line = line.unwrap();
-    let mut words = line.split_whitespace();
-    let instr = match words.next() {
-      Some("NOP") => { Ok(Instr::Nop) }
-      Some("MOV") => { parse_mov(&mut words) }
-      Some("SWP") => { Ok(Instr::Swp) }
-      Some("SAV") => { Ok(Instr::Sav) }
-      Some("ADD") => { words.next()
-                            .ok_or("invalid add instr without source".to_string())
-                            .and_then(parse_source)
-                            .map(Instr::Add) }
-      Some("SUB") => { words.next()
-                            .ok_or("invalid sub instr without source".to_string())
-                            .and_then(parse_source)
-                            .map(Instr::Sub) }
-      Some("NEG") => { Ok(Instr::Neg) }
-      Some("JMP") => { words.next()
-                            .ok_or("invalid jmp instr without label".to_string())
-                            .map(str::to_string)
-                            .map(Instr::Jmp) }
-      Some("JEZ") => { words.next()
-                            .ok_or("invalid jez instr without label".to_string())
-                            .map(str::to_string)
-                            .map(Instr::Jez) }
-      Some("JNZ") => { words.next()
-                            .ok_or("invalid jnz instr without label".to_string())
-                            .map(str::to_string)
-                            .map(Instr::Jnz) }
-      Some("JGZ") => { words.next()
-                            .ok_or("invalid jgz instr without label".to_string())
-                            .map(str::to_string)
-                            .map(Instr::Jgz) }
-      Some("JLZ") => { words.next()
-                            .ok_or("invalid jlz instr without label".to_string())
-                            .map(str::to_string)
-                            .map(Instr::Jlz) }
-      Some("JRO") => { words.next()
-                            .ok_or("invalid jro instr without source".to_string())
-                            .and_then(parse_source)
-                            .map(Instr::Jro) }
-      Some(s) => {
-        if s.starts_with("#") {
-          Ok(Instr::Comment(words.fold(s.to_string(), |acc, s| acc + " " + s)))
-        } else if s.starts_with("@") {
-          // Handle errors here - fail if the line is @3 fz
-          section = s[1..].parse::<u8>().unwrap();
-          continue;
-        } else if s.ends_with(":") {
-          Ok(Instr::Label(s[..s.len() - 1].to_string()))
-        } else {
-          Err(format!("invalid instr {}", s))
+    let instr = try!(parse_line(line));
+    match instr {
+      Instr::Section(i) => {
+        if i != next_section {
+          return Err(format!("expecting section {}, found section {}", next_section, i))
+        } else if i > 11 {
+          return Err(format!("section {} greater than maximum 11", i))
         }
+        next_section = next_section + 1;
+        programs.push(Program{instrs: instrs});
+        instrs = Vec::new();
       }
-      None => { Ok(Instr::Comment("".to_string())) }
-    };
+      i => instrs.push(i)
+    }
   }
-  Ok(1)
+  Ok(Spec{programs: programs})
 }
 
 fn main() {
