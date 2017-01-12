@@ -87,7 +87,7 @@ fn eat_comma(s: &str) -> Result<&str, String> {
   }
 }
 
-pub fn parse_mov<'a>(mut words: SplitWhitespace) -> Result<Instr<'a>, String> {
+pub fn parse_mov<'a>(words: &mut SplitWhitespace<'a>) -> Result<Instr<'a>, String> {
   let src = try!(words.next()
     .ok_or("invalid mov instruction without source".to_string())
     .and_then(eat_comma)
@@ -98,11 +98,11 @@ pub fn parse_mov<'a>(mut words: SplitWhitespace) -> Result<Instr<'a>, String> {
   Ok(Instr::Mov(src, dest))
 }
 
-pub fn parse_line<'a>(line: &'a str) -> Result<Instr, String> {
+pub fn parse_line(line: &str) -> Result<Instr, String> {
   let mut words = line.split_whitespace();
   match words.next() {
     Some("NOP") => Ok(Instr::Nop),
-    Some("MOV") => parse_mov(words),
+    Some("MOV") => parse_mov(&mut words),
     Some("SWP") => Ok(Instr::Swp),
     Some("SAV") => Ok(Instr::Sav),
     Some("ADD") => {
@@ -259,11 +259,11 @@ mod tests {
   #[test]
   fn test_parse_mov() {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
-               parse_mov("3, ACC".split_whitespace()));
+               parse_mov(&mut "3, ACC".split_whitespace()));
     assert_eq!(Ok(Instr::Mov(Source::Loc(Loc::Acc), Loc::Acc)),
-               parse_mov("ACC, ACC".split_whitespace()));
+               parse_mov(&mut "ACC, ACC".split_whitespace()));
 
-    assert!(parse_mov("f, ACC".split_whitespace()).is_err());
+    assert!(parse_mov(&mut "f, ACC".split_whitespace()).is_err());
   }
 
   #[test]
