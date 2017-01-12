@@ -1,5 +1,6 @@
 use std::io;
-use std::io::BufRead;
+use std::io::Read;
+use std::str::Lines;
 use std::str::SplitWhitespace;
 use std::collections::HashMap;
 
@@ -165,24 +166,23 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
   }
 }
 
-fn get_label<'a>(line: &'a str) -> (&'a str, Option<&str>) {
+fn get_label(line: &str) -> (&str, Option<&str>) {
   match line.find(":") {
     Some(i) => (&line[i+1..], Some(&line[..i-1])),
     None => (&line, None),
   }
 }
 
-fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
+fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
   let mut next_section = 0;
   let mut last_empty = false;
   let mut programs = Vec::new();
   let mut instrs = Vec::new();
   let mut labels = HashMap::new();
   let mut line_no = 0;
-  for line in buf.lines() {
+  for line in buf {
     line_no = line_no + 1;
-    let line = &line.unwrap();
-    let (line, label) = get_label(line);
+    let (line, label) = get_label(&line);
     match label {
       Some(label) => {
         if labels.insert(label, instrs.len()) != None {
@@ -226,10 +226,10 @@ fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
 }
 
 fn main() {
+  let mut buffer = String::new();
   let stdin = io::stdin();
-  let stdin = &mut stdin.lock();
-
-  let spec = parse_spec(stdin).unwrap();
+  stdin.lock().read_to_string(&mut buffer).unwrap();
+  let spec = parse_spec(buffer.lines()).unwrap();
   println!("{:?}", spec);
 }
 
