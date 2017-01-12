@@ -1,6 +1,7 @@
 use std::io;
 use std::io::BufRead;
 use std::str::SplitWhitespace;
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
 pub enum Loc {
@@ -18,10 +19,14 @@ pub enum Source {
   Loc(Loc),
 }
 
-type Label = String;
+#[derive(Debug, PartialEq)]
+struct InstrAndPos<'a> {
+  instr: Instr<'a>,
+  pos: i8,
+}
 
 #[derive(Debug, PartialEq)]
-pub enum Instr {
+pub enum Instr<'a> {
   Nop,
   Mov(Source, Loc),
   Swp,
@@ -29,13 +34,12 @@ pub enum Instr {
   Add(Source),
   Sub(Source),
   Neg,
-  Jmp(Label),
-  Jez(Label),
-  Jnz(Label),
-  Jgz(Label),
-  Jlz(Label),
+  Jmp(&'a str),
+  Jez(&'a str),
+  Jnz(&'a str),
+  Jgz(&'a str),
+  Jlz(&'a str),
   Jro(Source),
-  Label(String),
   Comment(String),
   Emptyline,
   // This is a section switch marker and won't be included in a program.
@@ -43,13 +47,14 @@ pub enum Instr {
 }
 
 #[derive(Debug)]
-struct Program {
-  instrs: Vec<Instr>,
+struct Program<'a> {
+  instrs: Vec<InstrAndPos<'a>>,
+  labels: HashMap<&'a str, usize>,
 }
 
 #[derive(Debug)]
-struct Spec {
-  programs: Vec<Program>,
+struct Spec<'a> {
+  programs: Vec<Program<'a>>,
 }
 
 pub fn parse_loc(s: &str) -> Result<Loc, String> {
@@ -82,7 +87,7 @@ fn eat_comma(s: &str) -> Result<&str, String> {
   }
 }
 
-pub fn parse_mov(words: &mut SplitWhitespace) -> Result<Instr, String> {
+pub fn parse_mov<'a>(mut words: SplitWhitespace) -> Result<Instr<'a>, String> {
   let src = try!(words.next()
     .ok_or("invalid mov instruction without source".to_string())
     .and_then(eat_comma)
@@ -93,11 +98,11 @@ pub fn parse_mov(words: &mut SplitWhitespace) -> Result<Instr, String> {
   Ok(Instr::Mov(src, dest))
 }
 
-pub fn parse_line(line: &str) -> Result<Instr, String> {
+pub fn parse_line<'a>(line: &'a str) -> Result<Instr, String> {
   let mut words = line.split_whitespace();
   match words.next() {
     Some("NOP") => Ok(Instr::Nop),
-    Some("MOV") => parse_mov(&mut words),
+    Some("MOV") => parse_mov(words),
     Some("SWP") => Ok(Instr::Swp),
     Some("SAV") => Ok(Instr::Sav),
     Some("ADD") => {
@@ -116,31 +121,26 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
     Some("JMP") => {
       words.next()
         .ok_or("invalid jmp instr without label".to_string())
-        .map(str::to_string)
         .map(Instr::Jmp)
     }
     Some("JEZ") => {
       words.next()
         .ok_or("invalid jez instr without label".to_string())
-        .map(str::to_string)
         .map(Instr::Jez)
     }
     Some("JNZ") => {
       words.next()
         .ok_or("invalid jnz instr without label".to_string())
-        .map(str::to_string)
         .map(Instr::Jnz)
     }
     Some("JGZ") => {
       words.next()
         .ok_or("invalid jgz instr without label".to_string())
-        .map(str::to_string)
         .map(Instr::Jgz)
     }
     Some("JLZ") => {
       words.next()
         .ok_or("invalid jlz instr without label".to_string())
-        .map(str::to_string)
         .map(Instr::Jlz)
     }
     Some("JRO") => {
@@ -158,27 +158,39 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
           .map_err(|e| e.to_string())
           .map(Instr::Section)
       } else {
-        Err(format!("invalid instr {}", s))
+        Err(format!("invalid instr '{}'", s))
       }
     }
     None => Ok(Instr::Emptyline),
   }
 }
 
-fn get_label<'a>(line: &'a str) -> (&'a str, Option<Label>) {
+fn get_label<'a>(line: &'a str) -> (&'a str, Option<&str>) {
   match line.find(":") {
-    Some(i) => (&line[i..], Some(line[..i-1].to_string())),
+    Some(i) => (&line[i+1..], Some(&line[..i-1])),
     None => (&line, None),
   }
 }
 
 fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
   let mut next_section = 0;
+  let mut last_empty = false;
   let mut programs = Vec::new();
   let mut instrs = Vec::new();
+  let mut labels = HashMap::new();
+  let mut line_no = 0;
   for line in buf.lines() {
+    line_no = line_no + 1;
     let line = &line.unwrap();
     let (line, label) = get_label(line);
+    match label {
+      Some(label) => {
+        if labels.insert(label, instrs.len()) != None {
+          return Err(format!("label {} already exists", label));
+        }
+      }
+      None => {}
+    }
     let instr = try!(parse_line(line));
     match instr {
       Instr::Section(i) => {
@@ -189,24 +201,24 @@ fn parse_spec(buf: &mut BufRead) -> Result<Spec, String> {
         }
         if next_section > 0 {
           // sections must end with an empty line
-          try!(instrs.pop()
-            .ok_or("invalid empty section".to_string())
-            .and_then(|i| {
-              match i {
-                Instr::Emptyline => Ok(i),
-                i => Err(format!("invalid nonempty final instr {:?}", i)),
-              }
-            }));
-          programs.push(Program { instrs: instrs });
+          if !last_empty {
+            return Err(format!("invalid section: didn't end with an empty line"));
+          }
+          last_empty = false;
+          programs.push(Program { instrs: instrs, labels: labels });
           instrs = Vec::new();
+          labels = HashMap::new()
         }
+        line_no = -1;
         next_section = next_section + 1;
       }
+      Instr::Emptyline => { last_empty = true }
       i => {
+        last_empty = false;
         if next_section == 0 {
           return Err(format!("missing @0 header, found {:?}", i));
         }
-        instrs.push(i)
+        instrs.push(InstrAndPos{instr: i, pos: line_no})
       }
     }
   }
@@ -247,11 +259,11 @@ mod tests {
   #[test]
   fn test_parse_mov() {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
-               parse_mov(&mut "3, ACC".split_whitespace()));
+               parse_mov("3, ACC".split_whitespace()));
     assert_eq!(Ok(Instr::Mov(Source::Loc(Loc::Acc), Loc::Acc)),
-               parse_mov(&mut "ACC, ACC".split_whitespace()));
+               parse_mov("ACC, ACC".split_whitespace()));
 
-    assert!(parse_mov(&mut "f, ACC".split_whitespace()).is_err());
+    assert!(parse_mov("f, ACC".split_whitespace()).is_err());
   }
 
   #[test]
@@ -263,7 +275,7 @@ mod tests {
                parse_line("SUB 3"));
     assert_eq!(Ok(Instr::Sub(Source::Loc(Loc::Left))),
                parse_line("SUB LEFT"));
-    assert_eq!(Ok(Instr::Jmp("FOO".to_string())),
+    assert_eq!(Ok(Instr::Jmp("FOO")),
                parse_line("JMP FOO"));
   }
 }
