@@ -46,13 +46,13 @@ pub enum Instr<'a> {
 }
 
 #[derive(Debug)]
-struct Program<'a> {
+pub struct Program<'a> {
   instrs: Vec<InstrAndPos<'a>>,
   labels: HashMap<&'a str, usize>,
 }
 
 #[derive(Debug)]
-struct Spec<'a> {
+pub struct Spec<'a> {
   programs: Vec<Program<'a>>,
 }
 
@@ -200,7 +200,7 @@ fn parse_program<'a>(buf: Vec<&'a str>) -> Result<Program<'a>, String> {
   })
 }
 
-fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
+pub fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
   let mut programs = Vec::new();
 
   let mut buf = buf.into_iter();
@@ -225,7 +225,6 @@ fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
       if !last_line.is_empty() {
         return Err(format!("invalid section: didn't end with an empty line"));
       }
-      print!("{:?}\n", raw_program);
       raw_programs.push(raw_program);
       raw_program = Vec::new();
     } else {
@@ -250,6 +249,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+  use std::io::Read;
+  use std::fs::File;
   use super::*;
 
   #[test]
@@ -282,9 +283,20 @@ mod tests {
   }
 
   #[test]
+  fn test_get_label() {
+    assert_eq!(("label nop", None), get_label("label nop"));
+    assert_eq!(("nop", Some("label")), get_label("label:nop"));
+    assert_eq!((" nop", Some("label")), get_label("label: nop"));
+    assert_eq!(("label : nop", None), get_label("label : nop"));
+    assert_eq!(("3: nop", Some("label")), get_label("label:3: nop"));
+  }
+
+  #[test]
   fn test_parse_line() {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
                parse_line("MOV 3, ACC"));
+    assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
+               parse_line(" MOV 3,   ACC"));
     assert_eq!(Ok(Instr::Swp), parse_line("SWP"));
     assert_eq!(Ok(Instr::Sub(Source::Val(3))), parse_line("SUB 3"));
     assert_eq!(Ok(Instr::Sub(Source::Loc(Loc::Left))),
@@ -293,11 +305,9 @@ mod tests {
   }
 
   #[test]
-  fn test_get_label() {
-    assert_eq!(("label nop", None), get_label("label nop"));
-    assert_eq!(("nop", Some("label")), get_label("label:nop"));
-    assert_eq!((" nop", Some("label")), get_label("label: nop"));
-    assert_eq!(("label : nop", None), get_label("label : nop"));
-    assert_eq!(("3: nop", Some("label")), get_label("label:3: nop"));
+  fn test_parse_spec() {
+    let mut buffer = String::new();
+    File::open("testdata/52544.0.txt").and_then(|mut f| f.read_to_string(&mut buffer)).unwrap();
+    assert!(parse_spec(buffer.lines()).is_ok());
   }
 }
