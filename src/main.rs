@@ -43,8 +43,6 @@ pub enum Instr<'a> {
   Jro(Source),
   Comment(String),
   Emptyline,
-  // This is a section switch marker and won't be included in a program.
-  Section(u8),
 }
 
 #[derive(Debug)]
@@ -149,18 +147,10 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
         .and_then(parse_source)
         .map(Instr::Jro)
     }
-    Some(s) => {
-      if s.starts_with("#") {
-        Ok(Instr::Comment(words.fold(s.to_string(), |acc, s| acc + " " + s)))
-      } else if s.starts_with("@") {
-        s[1..]
-          .parse::<u8>()
-          .map_err(|e| e.to_string())
-          .map(Instr::Section)
-      } else {
-        Err(format!("invalid instr '{}'", s))
-      }
-    }
+    Some(s) => match s.starts_with("#") {
+        true => Ok(Instr::Comment(words.fold(s.to_string(), |acc, s| acc + " " + s))),
+        false => Err(format!("invalid instr '{}'", s)),
+      },
     None => Ok(Instr::Emptyline),
   }
 }
@@ -209,7 +199,6 @@ fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
   }
 
   let mut next_section = 1;
-
   let mut raw_program: Vec<&str> = Vec::new();
   let mut raw_programs = Vec::new();
   for line in buf {
