@@ -23,7 +23,7 @@ pub enum Source {
 #[derive(Debug, PartialEq)]
 struct InstrAndPos<'a> {
   instr: Instr<'a>,
-  pos: i8,
+  pos: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -166,62 +166,78 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
   }
 }
 
-fn get_label(line: &str) -> (&str, Option<&str>) {
+pub fn get_label(line: &str) -> (&str, Option<&str>) {
   match line.find(":") {
-    Some(i) => (&line[i+1..], Some(&line[..i-1])),
+    Some(i) => {
+      if line[..i].contains(" ") {
+        (&line, None)
+      } else {
+        (&line[i+1..], Some(&line[..i]))
+      }
+    },
     None => (&line, None),
   }
 }
 
-fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
-  let mut next_section = 0;
-  let mut last_empty = false;
-  let mut programs = Vec::new();
+fn parse_program<'a>(buf: Vec<&'a str>) -> Result<Program<'a>, String> {
   let mut instrs = Vec::new();
   let mut labels = HashMap::new();
-  let mut line_no = 0;
-  for line in buf {
-    line_no = line_no + 1;
-    let (line, label) = get_label(&line);
+  for (line_no, line) in buf.iter().enumerate() {
+    let (line, label) = get_label(line);
     match label {
       Some(label) => {
         if labels.insert(label, instrs.len()) != None {
-          return Err(format!("label {} already exists", label));
+          return Err(format!("label '{}' already exists", label));
         }
       }
       None => {}
     }
-    let instr = try!(parse_line(line));
-    match instr {
-      Instr::Section(i) => {
-        if i != next_section {
-          return Err(format!("expecting section {}, found section {}", next_section, i));
-        } else if i > 11 {
-          return Err(format!("section {} greater than maximum 11", i));
-        }
-        if next_section > 0 {
-          // sections must end with an empty line
-          if !last_empty {
-            return Err(format!("invalid section: didn't end with an empty line"));
-          }
-          last_empty = false;
-          programs.push(Program { instrs: instrs, labels: labels });
-          instrs = Vec::new();
-          labels = HashMap::new()
-        }
-        line_no = -1;
-        next_section = next_section + 1;
-      }
-      Instr::Emptyline => { last_empty = true }
-      i => {
-        last_empty = false;
-        if next_section == 0 {
-          return Err(format!("missing @0 header, found {:?}", i));
-        }
-        instrs.push(InstrAndPos{instr: i, pos: line_no})
-      }
+    match try!(parse_line(line)) {
+      Instr::Comment(_) | Instr::Emptyline => continue,
+      instr => instrs.push(InstrAndPos{instr: instr, pos: line_no})
     }
   }
+  Ok(Program{instrs: instrs, labels: labels})
+}
+
+fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
+  let mut programs = Vec::new();
+
+  let mut buf = buf.into_iter();
+  let first_line = try!(buf.next().ok_or("invalid empty spec"));
+  if first_line != "@0" {
+    return Err(format!("invalid spec header {}, expecting @0", first_line));
+  }
+
+  let mut next_section = 1;
+
+  let mut raw_program: Vec<&str> = Vec::new();
+  let mut raw_programs = Vec::new();
+  for line in buf {
+    if line.starts_with("@") {
+      let sec = try!(line[1..].parse::<u8>().map_err(|e| e.to_string()));
+      if sec != next_section {
+        return Err(format!("expecting section {}, found section {}", next_section, sec));
+      } else if sec > 11 {
+        return Err(format!("section {} greater than maximum 11", sec));
+      }
+      next_section = next_section + 1;
+      let last_line = try!(raw_program.pop().ok_or("invalid empty section".to_string()));
+      if !last_line.is_empty() {
+        return Err(format!("invalid section: didn't end with an empty line"));
+      }
+      print!("{:?}\n", raw_program);
+      raw_programs.push(raw_program);
+      raw_program = Vec::new();
+    } else {
+      raw_program.push(line);
+    }
+  }
+
+  for raw_program in raw_programs {
+    programs.push(try!(parse_program(raw_program)))
+  }
+
   Ok(Spec { programs: programs })
 }
 
@@ -277,5 +293,14 @@ mod tests {
                parse_line("SUB LEFT"));
     assert_eq!(Ok(Instr::Jmp("FOO")),
                parse_line("JMP FOO"));
+  }
+
+  #[test]
+  fn test_get_label() {
+    assert_eq!(("label nop", None), get_label("label nop"));
+    assert_eq!(("nop", Some("label")), get_label("label:nop"));
+    assert_eq!((" nop", Some("label")), get_label("label: nop"));
+    assert_eq!(("label : nop", None), get_label("label : nop"));
+    assert_eq!(("3: nop", Some("label")), get_label("label:3: nop"));
   }
 }
