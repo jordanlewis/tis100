@@ -81,10 +81,9 @@ pub fn parse_source(s: &str) -> Result<Source, String> {
 }
 
 fn eat_comma(s: &str) -> Result<&str, String> {
-  if !s.ends_with(",") {
-    Err("invalid mov instruction with no comma".to_string())
-  } else {
-    Ok(&s[..s.len() - 1])
+  match s.ends_with(",") {
+    true => Ok(&s[..s.len() - 1]),
+    false => Err("invalid mov instruction with no comma".to_string()),
   }
 }
 
