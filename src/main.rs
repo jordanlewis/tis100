@@ -147,10 +147,12 @@ pub fn parse_line(line: &str) -> Result<Instr, String> {
         .and_then(parse_source)
         .map(Instr::Jro)
     }
-    Some(s) => match s.starts_with("#") {
+    Some(s) => {
+      match s.starts_with("#") {
         true => Ok(Instr::Comment(words.fold(s.to_string(), |acc, s| acc + " " + s))),
         false => Err(format!("invalid instr '{}'", s)),
-      },
+      }
+    }
     None => Ok(Instr::Emptyline),
   }
 }
@@ -161,9 +163,9 @@ pub fn get_label(line: &str) -> (&str, Option<&str>) {
       if line[..i].contains(" ") {
         (&line, None)
       } else {
-        (&line[i+1..], Some(&line[..i]))
+        (&line[i + 1..], Some(&line[..i]))
       }
-    },
+    }
     None => (&line, None),
   }
 }
@@ -182,11 +184,20 @@ fn parse_program<'a>(buf: Vec<&'a str>) -> Result<Program<'a>, String> {
       None => {}
     }
     match try!(parse_line(line)) {
-      Instr::Comment(_) | Instr::Emptyline => continue,
-      instr => instrs.push(InstrAndPos{instr: instr, pos: line_no})
+      Instr::Comment(_) |
+      Instr::Emptyline => continue,
+      instr => {
+        instrs.push(InstrAndPos {
+          instr: instr,
+          pos: line_no,
+        })
+      }
     }
   }
-  Ok(Program{instrs: instrs, labels: labels})
+  Ok(Program {
+    instrs: instrs,
+    labels: labels,
+  })
 }
 
 fn parse_spec<'a>(buf: Lines<'a>) -> Result<Spec<'a>, String> {
@@ -275,12 +286,10 @@ mod tests {
     assert_eq!(Ok(Instr::Mov(Source::Val(3), Loc::Acc)),
                parse_line("MOV 3, ACC"));
     assert_eq!(Ok(Instr::Swp), parse_line("SWP"));
-    assert_eq!(Ok(Instr::Sub(Source::Val(3))),
-               parse_line("SUB 3"));
+    assert_eq!(Ok(Instr::Sub(Source::Val(3))), parse_line("SUB 3"));
     assert_eq!(Ok(Instr::Sub(Source::Loc(Loc::Left))),
                parse_line("SUB LEFT"));
-    assert_eq!(Ok(Instr::Jmp("FOO")),
-               parse_line("JMP FOO"));
+    assert_eq!(Ok(Instr::Jmp("FOO")), parse_line("JMP FOO"));
   }
 
   #[test]
